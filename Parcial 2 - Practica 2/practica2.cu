@@ -45,14 +45,14 @@ __global__ void transpos_no_SM(int* source, int* dest, int size)
     }
 }
 
-__global__ void transpose_Shared(int* source, int* dest, int size)
+__global__ void transpos_Shared(int* source, int* dest, int size)
 {
     __shared__ int tile[TILE_DIM][TILE_DIM + 1];
 
     // input threads idx
     int i_in = threadIdx.x + blockIdx.x * blockDim.x;
     int j_in = threadIdx.y + blockIdx.y * blockDim.y;
-    
+   
     //input index
     int src_idx = j_in * size + i_in;
 
@@ -75,13 +75,24 @@ __global__ void transpose_Shared(int* source, int* dest, int size)
         //load from in array in row major and store to shared
         tile[threadIdx.y][threadIdx.x] = source[src_idx];
 
-        // wait untill all the threads load the values 
+        // wait untill all the threads load the values
         __syncthreads();
 
         dest[dst_idx] = tile[threadIdx.x][threadIdx.y];
     }
+}
 
+__global__ void multMatrix(int* sourceA, int* sourceB,int* dest,int size)
+{
 
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (i < size && j < size)
+    {
+        int des_idx = i * size + j;
+        dest[des_idx] = sourceA[des_idx] * sourceA[des_idx];
+    }
 }
 
 
@@ -104,15 +115,19 @@ int main() {
 
     const int n = 6;
     int size = n * n * sizeof(int);
-    int* host_a, * host_c;
-    int* dev_a, * dev_c ;
-    
+    int* host_a, * host_c, * host_mulMa;
+    int* dev_a, * dev_c ,* dev_mulMa;
+   
+
     host_a = (int*)malloc(size);
     host_c = (int*)malloc(size);
-    
+    host_mulMa = (int*)malloc(size);
+   
     cudaMalloc(&dev_a, size);
     check_CUDA_error("Error");
     cudaMalloc(&dev_c, size);
+    check_CUDA_error("Error");
+    cudaMalloc(&dev_mulMa, size);
     check_CUDA_error("Error");
 
     for (int i = 0; i < n * n; i++) {
@@ -135,18 +150,28 @@ int main() {
     cudaMemcpy(dev_c, host_c, size, cudaMemcpyHostToDevice);
     check_CUDA_error("Error");
 
-    dim3 grid(2, 2, 1);
     dim3 block(n/2, n/2, 1);
+    dim3 grid(n/(n/2), n / (n / 2), 1);
+
     //convolution << <grid, block >> > (dev_a, dev_kernel, dev_c, n, kLength);
-    transpose_Shared << <grid, block >> > (dev_a,dev_c,(n));
+    transpos_no_SM << <grid, block >> > (dev_a, dev_c, (n));
+    //transpos_Shared << <grid, block >> > (dev_a,dev_c,(n));
     check_CUDA_error("Error");
     cudaMemcpy(host_c, dev_c, size, cudaMemcpyDeviceToHost);
+    check_CUDA_error("Error");
+
+
+    multMatrix << <grid, block >> > (dev_a,dev_c,dev_mulMa,(n));
+    check_CUDA_error("Error");
+    cudaMemcpy(host_mulMa, dev_mulMa, size, cudaMemcpyDeviceToHost);
     check_CUDA_error("Error");
 
     cudaDeviceSynchronize();
     check_CUDA_error("Error");
     cudaDeviceReset();
     check_CUDA_error("Error");
+
+    cout << "\n";
 
     cout << "new:\n";
     for (int i = 0; i < n; i++) {
@@ -155,8 +180,19 @@ int main() {
         }
         cout << "\n";
     }
+
+    cout << "\n";
+
+    cout << "Mult Matrix:\n";
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            cout << host_mulMa[i * n + j] << " ";
+        }
+        cout << "\n";
+    }
     free(host_a);
     free(host_c);
+    free(host_mulMa);
 
 
     //return 0;
